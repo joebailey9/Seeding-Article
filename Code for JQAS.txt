@@ -1,0 +1,510 @@
+###################################
+library(R.utils)
+
+##################### Tournament designs
+
+generate_R1 <- function(r, n){
+
+  if(r == 1){
+
+    ## Random draw
+    R1 <- sample(1:n, replace = FALSE)
+
+  } else if(r == 2){
+
+    ## Ordered draw
+    R1 <- 1:n
+
+  } else if(r == 3){
+
+    ## Randomly positioned consecutive pairs
+    pairs <- sample(seq(1, n-1, 2), replace = FALSE)
+    R1 <- insert(pairs,
+                 ats = 1:(n/2),
+                 values = pairs + 1)
+
+  } else if(r == 4){
+
+    ## Fixed halves (Seeds 1 & 2)
+    R1 <- c(1, sample(3:n, replace = FALSE), 2)
+
+  } else if(r == 5){
+
+    ## Fixed quarters (Seeds 1-4, fixed sum)
+    R1 <- c(1, sample(5:n, replace = FALSE), 2)
+    R1 <- append(R1,
+                 c(4,3),
+                 (n-2)/2)
+
+  } else if(r == 6){
+
+    ## Fixed quarters (Seeds 1-4, fixed difference)
+    R1 <- c(1, sample(5:n, replace = FALSE), 2)
+    R1 <- append(R1,
+                 c(3,4),
+                 (n-2)/2)
+
+  } else if(r == 7){
+
+    ## Fixed eighths (Top 8, fixed sum)
+    R1 <- sample(9:n)
+    R1 <- insert(R1,
+                 ats = seq(1, n-8, 3),
+                 values = c(1,8,5,4,2,7,6,3))
+
+  } else if(r == 8){
+
+    ## Fixed eighths (Top 8, fixed difference)
+    R1 <- sample(9:n)
+    R1 <- insert(R1,
+                 ats = seq(1, n-8, 3),
+                 values = c(1,5,7,3,2,6,8,4))
+
+  } else if(r == 9){
+
+    ## Fixed sixteenths (Top 16, fixed sum)
+    R1 <- sample(17:n)
+    R1 <- insert(R1,
+                 ats = seq(1, n-16, 1),
+                 values = c(1,16,9,8,5,12,13,4,
+                            2,15,10,7,6,11,14,3))
+
+  } else if(r == 10){
+
+    ## Fixed sixteenths (Top 16, fixed difference)
+    R1 <- sample(17:n)
+    R1 <- insert(R1,
+                 ats = seq(1, n-16, 1),
+                 values = c(1,9,13,5,7,15,11,3,
+                            2,10,14,6,8,16,12,4))
+
+  } else {
+
+    stop("r must be an integer between 1 and 10.")
+
+  }
+
+  return(R1)
+
+}
+
+####################### Competition Kernels/Beat functions
+
+
+setBeat <- function(B) {
+  switch(
+    as.character(B),
+    "1" = function(a, b) 0.5 + (b - a) * p / (2^k),
+    "2" = function(a, b) {
+      a <- min(a, 2^k + 1)
+      b <- min(b, 2^k + 1)
+      0.5 + (b - a) * p / (2^k + 1)
+    },
+    "3" = function(a, b) 0.5 + (b - a) * p / n,
+    "4" = function(a, b) {
+      a <- min(a, 2^k + 1)
+      b <- min(b, 2^k + 1)
+      0.5 + sign(b - a) * (b - a)^2 * p / (2^k + 1)^2
+    },
+    "5" = function(a, b) 0.5 + sign(b - a) * (b - a)^2 * p / n^2,
+    "6" = function(a, b) {
+      a <- min(a, 2^k + 1)
+      b <- min(b, 2^k + 1)
+	1 / (1 + abs(a / b)^alpha)
+  },
+     "7" = function(a, b) {
+      #a <- min(a, 2^k + 1)
+      #b <- min(b, 2^k + 1)
+  eta <- 0.258 + 0.061 * abs(a-b)
+  ifelse(
+    (a - b) < 0,
+    exp(eta) / (1 + exp(eta)),
+    ifelse(
+      a == b,
+      0.5,
+      1 / (1 + exp(eta))
+    )
+  )
+}
+)
+}
+
+##############  Function for accuracy calculation
+
+compute_accuracy <- function(R_list, n, k) {
+
+  R <- length(R_list)  # number of rounds = log2(n)
+  seeds <- 1:(2^k)
+
+  # Expected elimination round for each seed
+  # Seed groups: 1, 2, 3:4, 5:8, ..., 2^(k-1)+1 : 2^k
+  expected_round <- rep(NA, 2^k)
+  start <- 1
+  for (g in 1:k) {
+    end <- 2^g
+    expected_round[start:end] <- R - g + 1
+    start <- end + 1
+  }
+  expected_round[1] <- R  # seed 1 expected to win
+
+  # Actual elimination round for each seed
+  actual_round <- rep(NA, 2^k)
+  for (s in seeds) {
+    for (r in 1:R) {
+      if (!(s %in% R_list[[r]])) {
+        actual_round[s] <- r - 1
+        break
+      }
+    }
+    if (is.na(actual_round[s])) actual_round[s] <- R  # champion
+  }
+
+  # Accuracy = proportion of seeds whose actual round matches expected round
+  accuracy <- sum(actual_round == expected_round) / (2^k - 1)
+
+  return(accuracy)
+}
+
+
+
+################ Parameters
+
+n<-32 #no of players
+k<-4 #no of seeds 2^k
+N_reps<-100000  #no. of simulations
+p_vals<-seq(0.0,0.5,0.1)  #value of p for linear and quadratic kernels
+#alpha_vals<-c(0.5,1,1.5,2,2.5)   #value of alpha for Jackson kernel
+
+###########################
+
+E <- c()
+H_norm <- c()
+CB_term <- c()
+S_norm <- c()
+S_final <- c()
+B_raw <- c()
+B_norm <- c()
+Prob_1v2<-c()
+Most_common_final<-c()
+P <- c()
+R <- c()
+Accuracy <- c()
+
+################# Simulations
+
+for(p in p_vals){  #loop around kernel strength parameter
+#for(alpha in alpha_values){
+
+for(r in 1:10){   #loop around tournament design
+
+
+for(B in 1:7){  #loop around competition kernel/beat function
+	
+
+beat <- setBeat(B)
+
+	
+count_R1_overall<-count_R2_overall<-count_R3_overall<-count_R4_overall<-count_R5_overall<-c()
+count_R1<-count_R2<-count_R3<-count_R4<-count_R5<-c(rep(0,n))
+seed_diff_R1_overall<-seed_diff_R2_overall<-seed_diff_R3_overall<-seed_diff_R4_overall<-seed_diff_R5_overall<-c()
+accuracy_overall<-c()
+matchup_R1_all<-matchup_R2_all<-matchup_R3_all<-matchup_R4_all<-matchup_R5_all<-matrix(rep(0,n^2),nrow=n)
+
+
+for(N in 1:N_reps){
+
+R1<-generate_R1(r,n)
+
+R2<-rep(NA,16)
+if(runif(1,0,1)>beat(R1[1],R1[2])){R2[1]<-R1[2]}else{R2[1]<-R1[1]}
+if(runif(1,0,1)>beat(R1[3],R1[4])){R2[2]<-R1[4]}else{R2[2]<-R1[3]}
+if(runif(1,0,1)>beat(R1[5],R1[6])){R2[3]<-R1[6]}else{R2[3]<-R1[5]}
+if(runif(1,0,1)>beat(R1[7],R1[8])){R2[4]<-R1[8]}else{R2[4]<-R1[7]}
+if(runif(1,0,1)>beat(R1[9],R1[10])){R2[5]<-R1[10]}else{R2[5]<-R1[9]}
+if(runif(1,0,1)>beat(R1[11],R1[12])){R2[6]<-R1[12]}else{R2[6]<-R1[11]}
+if(runif(1,0,1)>beat(R1[13],R1[14])){R2[7]<-R1[14]}else{R2[7]<-R1[13]}
+if(runif(1,0,1)>beat(R1[15],R1[16])){R2[8]<-R1[16]}else{R2[8]<-R1[15]}
+if(runif(1,0,1)>beat(R1[17],R1[18])){R2[9]<-R1[18]}else{R2[9]<-R1[17]}
+if(runif(1,0,1)>beat(R1[19],R1[20])){R2[10]<-R1[20]}else{R2[10]<-R1[19]}
+if(runif(1,0,1)>beat(R1[21],R1[22])){R2[11]<-R1[22]}else{R2[11]<-R1[21]}
+if(runif(1,0,1)>beat(R1[23],R1[24])){R2[12]<-R1[24]}else{R2[12]<-R1[23]}
+if(runif(1,0,1)>beat(R1[25],R1[26])){R2[13]<-R1[26]}else{R2[13]<-R1[25]}
+if(runif(1,0,1)>beat(R1[27],R1[28])){R2[14]<-R1[28]}else{R2[14]<-R1[27]}
+if(runif(1,0,1)>beat(R1[29],R1[30])){R2[15]<-R1[30]}else{R2[15]<-R1[29]}
+if(runif(1,0,1)>beat(R1[31],R1[32])){R2[16]<-R1[32]}else{R2[16]<-R1[31]}
+for(j in 1:(n)){
+if(j %in% R2){count_R1[j]<-count_R1[j]+1}else{}
+}
+
+seed_diff_R1<-abs(R1[seq(1,n-1,2)]-R1[seq(2,n,2)])
+
+
+R3<-rep(NA,8)
+if(runif(1,0,1)>beat(R2[1],R2[2])){R3[1]<-R2[2]}else{R3[1]<-R2[1]}
+if(runif(1,0,1)>beat(R2[3],R2[4])){R3[2]<-R2[4]}else{R3[2]<-R2[3]}
+if(runif(1,0,1)>beat(R2[5],R2[6])){R3[3]<-R2[6]}else{R3[3]<-R2[5]}
+if(runif(1,0,1)>beat(R2[7],R2[8])){R3[4]<-R2[8]}else{R3[4]<-R2[7]}
+if(runif(1,0,1)>beat(R2[9],R2[10])){R3[5]<-R2[10]}else{R3[5]<-R2[9]}
+if(runif(1,0,1)>beat(R2[11],R2[12])){R3[6]<-R2[12]}else{R3[6]<-R2[11]}
+if(runif(1,0,1)>beat(R2[13],R2[14])){R3[7]<-R2[14]}else{R3[7]<-R2[13]}
+if(runif(1,0,1)>beat(R2[15],R2[16])){R3[8]<-R2[16]}else{R3[8]<-R2[15]}
+for(j in 1:(n)){
+if(j %in% R3){count_R2[j]<-count_R2[j]+1}else{}
+}
+
+seed_diff_R2<-abs(R2[seq(1,n/2-1,2)]-R2[seq(2,n/2,2)])
+
+R4<-rep(NA,4)
+if(runif(1,0,1)>beat(R3[1],R3[2])){R4[1]<-R3[2]}else{R4[1]<-R3[1]}
+if(runif(1,0,1)>beat(R3[3],R3[4])){R4[2]<-R3[4]}else{R4[2]<-R3[3]}
+if(runif(1,0,1)>beat(R3[5],R3[6])){R4[3]<-R3[6]}else{R4[3]<-R3[5]}
+if(runif(1,0,1)>beat(R3[7],R3[8])){R4[4]<-R3[8]}else{R4[4]<-R3[7]}
+for(j in 1:(n)){
+if(j %in% R4){count_R3[j]<-count_R3[j]+1}else{}
+}
+
+seed_diff_R3<-abs(R3[seq(1,n/4-1,2)]-R3[seq(2,n/4,2)])
+
+R5<-rep(NA,2)
+if(runif(1,0,1)>beat(R4[1],R4[2])){R5[1]<-R4[2]}else{R5[1]<-R4[1]}
+if(runif(1,0,1)>beat(R4[3],R4[4])){R5[2]<-R4[4]}else{R5[2]<-R4[3]}
+for(j in 1:(n)){
+if(j %in% R5){count_R4[j]<-count_R4[j]+1}else{}
+}
+
+seed_diff_R4<-abs(R4[seq(1,n/8-1,2)]-R4[seq(2,n/8,2)])
+
+R6<-rep(NA,1)
+if(runif(1,0,1)>beat(R5[1],R5[2])){R6[1]<-R5[2]}else{R6[1]<-R5[1]}
+for(j in 1:(n)){
+if(j %in% R6){count_R5[j]<-count_R5[j]+1}else{}
+}
+
+seed_diff_R5<-abs(R5[seq(1,n/16-1,2)]-R5[seq(2,n/16,2)])
+
+
+R_list <- list(R1, R2, R3, R4, R5, R6)
+accuracy <- compute_accuracy(R_list, n, k)
+
+
+accuracy_overall<-c(accuracy_overall,accuracy)
+seed_diff_R1_overall<-c(seed_diff_R1_overall,seed_diff_R1)
+seed_diff_R2_overall<-c(seed_diff_R2_overall,seed_diff_R2)
+seed_diff_R3_overall<-c(seed_diff_R3_overall,seed_diff_R3)
+seed_diff_R4_overall<-c(seed_diff_R4_overall,seed_diff_R4)
+seed_diff_R5_overall<-c(seed_diff_R5_overall,seed_diff_R5)
+
+
+########## match ups all
+for(i in 1:(length(R1)/2)){
+matchup_R1_all[R1[2*i-1],R1[2*i]]<-matchup_R1_all[R1[2*i-1],R1[2*i]]+1
+}
+for(i in 1:(length(R2)/2)){
+matchup_R2_all[R2[2*i-1],R2[2*i]]<-matchup_R2_all[R2[2*i-1],R2[2*i]]+1
+}
+for(i in 1:(length(R3)/2)){
+matchup_R3_all[R3[2*i-1],R3[2*i]]<-matchup_R3_all[R3[2*i-1],R3[2*i]]+1
+}
+for(i in 1:(length(R4)/2)){
+matchup_R4_all[R4[2*i-1],R4[2*i]]<-matchup_R4_all[R4[2*i-1],R4[2*i]]+1
+}
+for(i in 1:(length(R5)/2)){
+matchup_R5_all[R5[2*i-1],R5[2*i]]<-matchup_R5_all[R5[2*i-1],R5[2*i]]+1
+}
+
+
+}
+
+
+
+count_R1_overall<-count_R1
+count_R2_overall<-count_R2
+count_R3_overall<-count_R3
+count_R4_overall<-count_R4
+count_R5_overall<-count_R5
+
+
+
+matchup_R1_all<-matchup_R1_all+t(matchup_R1_all)
+matchup_R2_all<-matchup_R2_all+t(matchup_R2_all)
+matchup_R3_all<-matchup_R3_all+t(matchup_R3_all)
+matchup_R4_all<-matchup_R4_all+t(matchup_R4_all)
+matchup_R5_all<-matchup_R5_all+t(matchup_R5_all)
+
+
+count_R1_overall_mean<-count_R1_overall/N
+count_R2_overall_mean<-count_R2_overall/N
+count_R3_overall_mean<-count_R3_overall/N
+count_R4_overall_mean<-count_R4_overall/N
+count_R5_overall_mean<-count_R5_overall/N
+
+accuracy_overall_mean<-mean(accuracy_overall)
+accuracy_overall_sd<-sd(accuracy_overall)
+
+
+
+prob_win<-rbind(count_R1_overall_mean,
+count_R2_overall_mean,
+count_R3_overall_mean,
+count_R4_overall_mean,
+count_R5_overall_mean)
+
+
+prob_losing<-rbind(1-count_R1_overall_mean,
+count_R1_overall_mean-count_R2_overall_mean,
+count_R2_overall_mean-count_R3_overall_mean,
+count_R3_overall_mean-count_R4_overall_mean,
+count_R4_overall_mean-count_R5_overall_mean,
+count_R5_overall_mean)
+
+
+mean_seed_diff<-c(mean(seed_diff_R1_overall),mean(seed_diff_R2_overall),mean(seed_diff_R3_overall),mean(seed_diff_R4_overall),mean(seed_diff_R5_overall))
+sd_seed_diff<-c(sd(seed_diff_R1_overall),sd(seed_diff_R2_overall),sd(seed_diff_R3_overall),sd(seed_diff_R4_overall),sd(seed_diff_R5_overall))
+
+###match ups
+matchup_all<-matchup_R1_all+matchup_R2_all+matchup_R3_all+matchup_R4_all+matchup_R5_all
+
+row_max_vals <- apply(matchup_all, 1, max)
+row_max_cols_idx <- apply(matchup_all, 1, which.max)
+rbind(row_max_vals,row_max_cols_idx)
+
+
+common<-c()
+for(i in seq(1,40,2)){  #top 20 match ups, numbers duplicated hence seq every 2
+common<-rbind(common,c(which(matchup_all==sort(c(matchup_all),decreasing=T)[i],arr.ind = T)[1,],sort(c(matchup_all),decreasing=T)[i]/N))
+}
+
+
+common_final<-c()
+for(i in seq(1,40,2)){  #top 20 match ups, numbers duplicated hence seq every 2
+common_final<-rbind(common_final,c(which(matchup_R5_all==sort(c(matchup_R5_all),decreasing=T)[i],arr.ind = T)[1,],sort(c(matchup_R5_all),decreasing=T)[i]/sum(matchup_R5_all)))
+}
+
+
+### Competitive balance
+cbi <- c(sd(count_R1_overall_mean),sd(count_R2_overall_mean),sd(count_R3_overall_mean),sd(count_R4_overall_mean),sd(count_R5_overall_mean))
+
+
+###av seed diff by seeed
+seed_diff_by_seed_R1_mean<-seed_diff_by_seed_R2_mean<-seed_diff_by_seed_R3_mean<-seed_diff_by_seed_R4_mean<-seed_diff_by_seed_R5_mean<-c()
+
+for(i in 1:n){
+seed_diff_by_seed_R1_mean[i]<-sum(matchup_R1_all[i,]*abs((1:n)-i))/sum(matchup_R1_all[i,])
+}
+seed_diff_by_seed_R1_mean[which(is.na(seed_diff_by_seed_R1_mean))]<-0
+for(i in 1:n){
+seed_diff_by_seed_R2_mean[i]<-sum(matchup_R2_all[i,]*abs((1:n)-i))/sum(matchup_R2_all[i,])
+}
+seed_diff_by_seed_R2_mean[which(is.na(seed_diff_by_seed_R2_mean))]<-0
+for(i in 1:n){
+seed_diff_by_seed_R3_mean[i]<-sum(matchup_R3_all[i,]*abs((1:n)-i))/sum(matchup_R3_all[i,])
+}
+seed_diff_by_seed_R3_mean[which(is.na(seed_diff_by_seed_R3_mean))]<-0
+for(i in 1:n){
+seed_diff_by_seed_R4_mean[i]<-sum(matchup_R4_all[i,]*abs((1:n)-i))/sum(matchup_R4_all[i,])
+}
+seed_diff_by_seed_R4_mean[which(is.na(seed_diff_by_seed_R4_mean))]<-0
+for(i in 1:n){
+seed_diff_by_seed_R5_mean[i]<-sum(matchup_R5_all[i,]*abs((1:n)-i))/sum(matchup_R5_all[i,])
+}
+seed_diff_by_seed_R5_mean[which(is.na(seed_diff_by_seed_R5_mean))]<-0
+
+
+
+##############################
+# OBJECTIVE TERMS #
+##############################
+
+# Efficiency (already computed)
+E <- c(E,count_R5_overall_mean[1])  # P(seed 1 wins)
+
+# Normalised entropy
+entropy <- -sum(count_R5_overall_mean * log(count_R5_overall_mean + 1e-9))
+H_raw <- entropy
+H_norm <- c(H_norm,H_raw / log(n))
+
+# Competitive balance
+cbi_raw <- sd(count_R5_overall_mean)
+cbi_max <- sd(c(1, rep(0, n-1)))
+C_norm <- cbi_raw / cbi_max
+CB_term <- c(CB_term,1 - C_norm)
+
+# Matchup quality (across rounds)
+mean_seed_diff_all <- c(mean(seed_diff_R1_overall),
+                        mean(seed_diff_R2_overall),
+                        mean(seed_diff_R3_overall),
+                        mean(seed_diff_R4_overall),
+                        mean(seed_diff_R5_overall))
+
+S_norm_per_round <- 1 - (mean_seed_diff_all / (n - 1))
+
+S_norm<-c(S_norm2,sum(2^(-(log2(n):1))*S_norm_per_round)/sum(2^(-(log2(n):1))))
+
+### Final Match Quality
+
+# Mean absolute seed difference in the final
+mean_seed_diff_R5 <- sum(
+  matchup_R5_all * abs(
+    row(matchup_R5_all) - col(matchup_R5_all)
+  )
+) / sum(matchup_R5_all)
+
+# Normalised final match quality
+S_final <- c(S_final, 1 - (mean_seed_diff_R5 / (n - 1)))
+
+
+# Bracket bias
+bias_vec <- seed_diff_by_seed_R5_mean+seed_diff_by_seed_R4_mean+seed_diff_by_seed_R3_mean+seed_diff_by_seed_R2_mean+seed_diff_by_seed_R1_mean
+B_raw <- sd(bias_vec)
+B_max <- max(bias_vec) - min(bias_vec)
+B_norm <- c(B_norm,ifelse(B_max > 0, B_raw / B_max, 0))
+
+#prob 1v2 in tournament
+prob_1v2<-matchup_all[1,2]/(N)
+Prob_1v2<-c(Prob_1v2,prob_1v2)
+
+#common final
+most_common_final<-common_final[1,]
+Most_common_final<-rbind(Most_common_final,most_common_final)
+
+#p value
+P <- c(P,p)
+
+#Tournament design index
+R <- c(R,r)
+
+#Accuracy
+Accuracy <- c(Accuracy,accuracy_overall_mean)
+
+
+
+##########################################
+
+} #end loop for b
+
+} #end loop for r
+
+} #end loop for p
+
+
+##############################
+# STORE COMPONENTS
+##############################
+
+obj_components <- list(
+  Efficiency = E,
+  Entropy = H_norm,
+  Balance = CB_term,
+  MatchQuality = S_norm,
+  Bias = B_norm,
+Prob_1v2 = Prob_1v2,
+Most_common_final = Most_common_final,
+Accuracy = Accuracy,
+P = P,
+R = R,
+FinalQuality = S_final
+)
+
+
+
+
